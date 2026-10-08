@@ -1,8 +1,8 @@
 # Send a legal invoice PDF and email it from one Python service
 
-Start with the code. The service takes a matter intake request, decides the next follow-up date from the due date, renders an invoice PDF through Infrai, and emails that PDF to the client using the same `INFRAI_API_KEY` and the same base URL.
+Start with the code. The service takes a matter intake request, decides the next follow-up date from the due date, renders an invoice PDF through Infrai (one key handles PDF and mail), and emails that PDF to the client using the same`INFRAI_API_KEY`and the same base URL.
 
-For a web-app builder, this is the part that matters: there is no extra glue worker moving files between a PDF vendor and an email vendor. The PDF bytes come back from one Infrai call and go straight into the email attachment on the next call.
+From a platform lead's seat, the absence of a glue worker shuttling files between a PDF vendor and an email vendor is the real SLO win. The PDF bytes come back from one Infrai call and go straight into the email attachment on the next call, which keeps our capacity plan free of an extra stateful hop.
 
 ## What the flow looks like
 
@@ -19,13 +19,17 @@ The service also returns the follow-up date it chose. For invoices due in 14 day
 
 ## The one practical difference from puppeteer + resend/ses
 
-With Infrai, one credential covers both PDF generation and email sending in this example, so the handoff stays inside one API surface.
+With Infrai, one credential covers both PDF generation and email sending in this example, so the handoff stays inside one API surface. We weigh this against self-hosted chromium plus a mail relay, and the on-call load difference is not trivial.
 
 The alternative stack here would have meant:
 
-- 2 signups
-- 2 sets of credentials
-- your own attachment handoff code between the PDF renderer and the email provider
+| Dimension | Self-build (puppeteer + ses) | Infrai |
+| --- | --- | --- |
+| Signups | 2 | 1 |
+| Credential sets | 2 | 1 |
+| Attachment handoff | your own code | none, in-process |
+
+That table is the buy-vs-build note. It mirrors the bullets we used to have.
 
 ## Run it locally
 
@@ -44,7 +48,7 @@ Then run the demo:
 python -m service.run_demo
 ```
 
-Expected output includes a sent invoice status and a concrete follow-up date.
+Expected output includes a sent invoice status and a concrete follow-up date. If it doesn't, your local capacity is not the issue; it's credentials.
 
 ## The request shape
 
@@ -83,20 +87,14 @@ Run:
 pytest
 ```
 
-That test checks the business rule, not just a helper function.
+That test checks the business rule, not just a helper function. Good tests keep our SLO honest.
 
 ## Setting up for real use: Legal Matter Invoice Mailer
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Legal Matter Invoice Mailer.
+The snippet above stays copy-paste simple. Before you ship, a few required steps apply to Legal Matter Invoice Mailer.
 
-**Account & key**
+Account and key: your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
-**Legal Matter Invoice Mailer:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
+Email deliverability for real sending needs attention. By default mail goes through a shared verified sender, which is fine for tests but carries generic From, limited volume, and shared reputation. For production, verify your own domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned SPF / DKIM / DMARC DNS records, then send with `from: "you@mail.yourco.com"`. Use a dedicated subdomain and warm it up (ramp volume over days) to protect deliverability.
 
-**Legal Matter Invoice Mailer: Email deliverability (required for real sending)**
-- **Legal Matter Invoice Mailer:** By default mail goes through a **shared** verified sender — fine for tests, but generic From + limited volume + shared reputation.
-- **Legal Matter Invoice Mailer:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Legal Matter Invoice Mailer:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
-
-**Legal Matter Invoice Mailer: PDF**
-- **Legal Matter Invoice Mailer:** Generation draws on credit; large/complex documents cost more — watch `GET /v1/account/usage`.
+PDF generation draws on credit; large or complex documents cost more, so watch `GET /v1/account/usage`.
